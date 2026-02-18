@@ -71,15 +71,26 @@ def perform_audit(text: str, domain: str) -> dict:
             claim = anchor.get("claim", "").lower()
             live_data = None
             
-            if "oil" in claim or "energy" in claim or "brent" in claim:
+            # ENRICHMENT: Improved Specialist Routing
+        for anchor in audit_data.get("data_anchors", []):
+            claim = anchor.get("claim", "").lower()
+            live_data = None
+            
+            # 1. EIA (Energy & Oil) - Broaden keywords
+            if any(k in claim for k in ["oil", "brent", "wti", "petroleum", "gasoline", "fuel", "energy"]):
+                # Defaulting to WTI Crude Spot Price
                 live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
-            elif "inflation" in claim or "cpi" in claim:
-                live_data = connectors.get_fred_data("CPIAUCSL")
-            elif "unemployment" in claim:
-                live_data = connectors.get_fred_data("UNRATE")
-            elif "gdp" in claim:
+            
+            # 2. FRED (US Econ) - Broaden keywords
+            elif any(k in claim for k in ["inflation", "cpi", "consumer price", "unemployment", "jobs", "yield"]):
+                series_id = "CPIAUCSL" if "inflation" in claim else "UNRATE"
+                live_data = connectors.get_fred_data(series_id)
+            
+            # 3. World Bank (Global Metrics)
+            elif any(k in claim for k in ["gdp", "poverty", "global growth", "population"]):
                 live_data = connectors.get_world_bank_data("NY.GDP.MKTP.CD")
 
+            # Update the UI values if we got a hit
             if live_data:
                 anchor["official_value"] = f"{live_data['value']}"
                 anchor["source"] = f"{live_data['source']} ({live_data['date']})"
