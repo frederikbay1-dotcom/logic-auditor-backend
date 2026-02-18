@@ -6,13 +6,14 @@ import re
 from bs4 import BeautifulSoup
 from api.services.data_connectors import DataConnectors
 
+# Initialize specialists
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 connectors = DataConnectors()
 
 # RE-INTRODUCED: Strict Schema for the AI Brain
 SYSTEM_PROMPT = """
 You are the "Logic Auditor." Deconstruct the provided text.
-Return ONLY a valid JSON object with this exact structure:
+Return ONLY a valid JSON object with this EXACT structure:
 
 {
   "theses": ["string"],
@@ -47,20 +48,21 @@ def perform_audit(text: str, domain: str) -> dict:
             
         audit_data = json.loads(json_match.group(0))
 
-        # Specialists Keywords
+        # Define keyword lists for specialist routing
         energy_keywords = ["oil", "brent", "wti", "petroleum", "gasoline", "fuel", "energy", "crude", "barrel"]
         econ_keywords = ["inflation", "cpi", "consumer price", "unemployment", "jobs", "yield", "interest rate"]
         global_keywords = ["gdp", "poverty", "growth", "population", "emissions", "carbon"]
 
         # ENRICHMENT: Now with Safety Checks
         for anchor in audit_data.get("data_anchors", []):
-            # SAFETY: If anchor is a string (AI lapse), skip it instead of crashing
+            # SAFETY: If the AI sent a string instead of a dict, skip to prevent 'str has no get' error
             if not isinstance(anchor, dict):
                 continue
                 
             claim = anchor.get("claim", "").lower()
             live_data = None
             
+            # Route to the correct Specialist Lab
             if any(k in claim for k in energy_keywords):
                 live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
             elif any(k in claim for k in econ_keywords):
@@ -69,11 +71,12 @@ def perform_audit(text: str, domain: str) -> dict:
             elif any(k in claim for k in global_keywords):
                 live_data = connectors.get_world_bank_data("NY.GDP.MKTP.CD")
 
+            # Inject official data if found
             if live_data:
                 anchor["official_value"] = f"{live_data['value']}"
                 anchor["source"] = f"{live_data['source']} ({live_data['date']})"
 
-        # SANITIZATION: Prevent React Error #31
+        # SANITIZATION: Force 'unresolved_conflicts' to be a list of strings for React
         conflicts = audit_data.get("unresolved_conflicts", [])
         clean_conflicts = []
         for item in conflicts:
