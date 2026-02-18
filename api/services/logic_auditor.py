@@ -11,25 +11,17 @@ connectors = DataConnectors()
 
 # RE-INTRODUCED: Strict Schema for the AI Brain
 SYSTEM_PROMPT = """
-You are the "Logic Auditor," a specialist in analytical deconstruction. 
-Deconstruct the provided text and return ONLY a valid JSON object.
+You are the "Logic Auditor." Deconstruct the provided text.
+Return ONLY a valid JSON object with this exact structure:
 
-STRICT JSON SCHEMA:
 {
   "theses": ["string"],
-  "logical_flaws": [
-    {
-      "flaw_type": "string",
-      "lawyers_note": "string",
-      "quote": "string",
-      "severity": "High/Medium/Low"
-    }
-  ],
+  "logical_flaws": [{"flaw_type": "string", "lawyers_note": "string", "quote": "string", "severity": "High"}],
   "data_anchors": [
     {
-      "claim": "string",
-      "source": "string",
-      "official_value": "TBD",
+      "claim": "string", 
+      "source": "string", 
+      "official_value": "TBD", 
       "variance": "N/A"
     }
   ],
@@ -62,7 +54,7 @@ def perform_audit(text: str, domain: str) -> dict:
 
         # ENRICHMENT: Now with Safety Checks
         for anchor in audit_data.get("data_anchors", []):
-            # SAFETY: If anchor is a string (AI error), skip the enrichment
+            # SAFETY: If anchor is a string (AI lapse), skip it instead of crashing
             if not isinstance(anchor, dict):
                 continue
                 
@@ -101,7 +93,7 @@ def perform_audit(text: str, domain: str) -> dict:
 def scrape_text_from_url(url: str) -> str:
     if not url.strip().startswith("http"):
         return url
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
         if res.status_code == 200:
@@ -111,5 +103,5 @@ def scrape_text_from_url(url: str) -> str:
             soup = BeautifulSoup(res.text, 'html.parser')
             return " ".join([p.text for p in soup.find_all('p')])
         return ""
-    except Exception as e:
-        raise Exception(f"Scraper Error: {str(e)}")
+    except Exception:
+        return ""
