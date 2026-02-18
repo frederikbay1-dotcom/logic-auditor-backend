@@ -88,25 +88,20 @@ def perform_audit(text: str, domain: str) -> dict:
 
 # ... (Keep your scrape_text_from_url function as is)
 def scrape_text_from_url(url: str) -> str:
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    }
-    
-    # Try Jina first (Better formatting)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
-        jina_res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
-        if jina_res.status_code == 200:
-            return jina_res.text
-    except:
-        pass
-
-    # Fallback: Direct Scrape if Jina is blocked
-    res = requests.get(url, headers=headers, timeout=10)
-    if res.status_code == 200:
-        soup = BeautifulSoup(res.text, 'html.parser')
-        # Standard news article paragraph extraction
-        paragraphs = soup.find_all('p')
-        return " ".join([p.text for p in paragraphs])
-    
-    # If all fail, throw a descriptive error
-    raise Exception(f"Access Denied by Publisher (Status {res.status_code}). Please copy-paste the article text manually.")
+        # Try Jina AI first (Best for bypassing blocks)
+        res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
+        if res.status_code == 200:
+            return res.text
+            
+        # Fallback to direct scrape
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            return " ".join([p.text for p in soup.find_all('p')])
+            
+        # If we reach here, tell the user WHY it failed
+        raise Exception(f"Publisher Blocked Access (Status {res.status_code}). Please paste text manually.")
+    except Exception as e:
+        raise Exception(f"Scraper Error: {str(e)}")
