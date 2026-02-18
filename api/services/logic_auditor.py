@@ -7,50 +7,70 @@ from bs4 import BeautifulSoup
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
+# THE DICTATOR PROMPT: Enforces the exact schema your Pydantic model needs
 SYSTEM_PROMPT = """
 You are the "Logic Auditor," an LSAT-style analytical reader. 
 Deconstruct the provided text in the domains of Economics or Climate.
-Respond strictly with a JSON object matching the requested schema.
-Include these specific flaw types if present:
-- Causal Flaw
-- Conditional Error
-- Sampling Flaw
-- Omission Flaw
-- Comparison Flaw
 
-Map the article's claims to required data anchors (e.g., FRED 'INDPRO', CPI).
+STRICT JSON SCHEMA REQUIREMENT:
+You must return ONLY a JSON object with this exact structure:
+{
+  "theses": ["string", "string"],
+  "logical_flaws": [
+    {
+      "flaw_type": "string",
+      "lawyers_note": "string",
+      "quote": "string",
+      "severity": "High/Medium/Low"
+    }
+  ],
+  "data_anchors": [
+    {
+      "claim": "string",
+      "source": "string",
+      "official_value": "TBD - Verify via FRED",
+      "variance": "N/A"
+    }
+  ],
+  "unresolved_conflicts": ["string"],
+  "next_steps": ["string"]
+}
+
+Rules:
+- 'theses': Extract the primary core arguments.
+- 'logical_flaws': Identify Causal Flaws, Conditional Errors, or Omissions.
+- 'data_anchors': Isolate claims that need hard data verification. 
+- Return NO conversational text. No markdown blocks. Just the raw JSON.
 """
 
 def perform_audit(text: str, domain: str) -> dict:
     try:
+        # NOTE: If you are on a Vercel Hobby plan (10s timeout), 
+        # consider using a 'haiku' model for speed if this times out.
         response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=8192, # <--- INCREASE THIS TO 8192
+            model="claude-sonnet-4-6", 
+            max_tokens=4096,
             system=SYSTEM_PROMPT,
             messages=[
-                {"role": "user", "content": f"Domain: {domain}\n\nArticle Text:\n{text}\n\nReturn strictly valid JSON."}
+                {"role": "user", "content": f"Domain: {domain}\n\nArticle Text:\n{text}"}
             ],
-            temperature=0.2
+            temperature=0.1
         )
         
         raw_text = response.content[0].text
-        print(f"RAW AI TEXT: {raw_text}") # <--- ADD THIS SO VERCEL LOGS IT
         
+        # Robustly extract JSON even if Claude adds 'Here is the JSON:'
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if not json_match:
-            return {"error": "Failed to extract valid JSON. Regex missed."}
+            return {"error": "AI failed to produce a JSON block."}
             
         clean_json = json_match.group(0)
-        
-        try:
-            return json.loads(clean_json)
-        except json.JSONDecodeError as decode_error:
-            # This captures the exact parsing error and returns it to Lovable
-            return {"error": f"JSON Parse Failed: {str(decode_error)}. Text was: {clean_json[:100]}..."}
+        return json.loads(clean_json)
         
     except Exception as e:
         return {"error": str(e)}
 
+# ... (Keep your scrape_text_from_url function as is)
 def scrape_text_from_url(url: str) -> str:
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
