@@ -3,10 +3,10 @@ import json
 import anthropic
 import requests
 import re
-from bs4 import BeautifulSoup
+from api.services.data_connectors import DataConnectors # <--- Add this import
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
+# Initialize the connectors
+connectors = DataConnectors()
 # THE DICTATOR PROMPT: Enforces the exact schema your Pydantic model needs
 SYSTEM_PROMPT = """
 You are the "Logic Auditor," an LSAT-style analytical reader. 
@@ -45,27 +45,43 @@ Rules:
 
 def perform_audit(text: str, domain: str) -> dict:
     try:
-        # NOTE: If you are on a Vercel Hobby plan (10s timeout), 
-        # consider using a 'haiku' model for speed if this times out.
+        # 1. Get the Logical Audit from Claude
         response = client.messages.create(
             model="claude-sonnet-4-6", 
             max_tokens=4096,
             system=SYSTEM_PROMPT,
-            messages=[
-                {"role": "user", "content": f"Domain: {domain}\n\nArticle Text:\n{text}"}
-            ],
+            messages=[{"role": "user", "content": f"Domain: {domain}\n\nText:\n{text}"}],
             temperature=0.1
         )
         
         raw_text = response.content[0].text
-        
-        # Robustly extract JSON even if Claude adds 'Here is the JSON:'
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if not json_match:
             return {"error": "AI failed to produce a JSON block."}
             
-        clean_json = json_match.group(0)
-        return json.loads(clean_json)
+        audit_data = json.loads(json_match.group(0))
+
+        # 2. Enrich "Data Anchors" with Live Data
+        for anchor in audit_data.get("data_anchors", []):
+            claim = anchor.get("claim", "").lower()
+            
+            # Simple keyword routing to the correct Lab
+            live_data = None
+            if "oil" in claim or "energy" in claim:
+                live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC") # WTI Crude
+            elif "inflation" in claim or "cpi" in claim:
+                live_data = connectors.get_fred_data("CPIAUCSL")
+            elif "unemployment" in claim:
+                live_data = connectors.get_fred_data("UNRATE")
+            elif "gdp" in claim:
+                live_data = connectors.get_world_bank_data("NY.GDP.MKTP.CD")
+
+            # If we found a match, overwrite the TBD
+            if live_data:
+                anchor["official_value"] = f"{live_data['value']}"
+                anchor["source"] = f"{live_data['source']} ({live_data['date']})"
+        
+        return audit_data
         
     except Exception as e:
         return {"error": str(e)}
