@@ -63,8 +63,8 @@ def perform_audit(text: str, domain: str) -> dict:
             
         audit_data = json.loads(json_match.group(0))
 
-        # 2. THE SPECIALISTS: Intent-Based Routing
-        # This replaces the brittle keyword-matching logic
+        # 2. THE SPECIALISTS: Intent-Based Execution
+        # We rely on the AI's categorization to call the correct Data Lab
         for anchor in audit_data.get("data_anchors", []):
             if not isinstance(anchor, dict):
                 continue
@@ -73,26 +73,28 @@ def perform_audit(text: str, domain: str) -> dict:
             live_data = None
             
             if category == "ENERGY_OIL":
+                # Specifically targeting WTI Crude Spot Price
                 live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
             elif category == "ECON_INFLATION":
                 live_data = connectors.get_fred_data("CPIAUCSL")
             elif category == "ECON_UNEMPLOYMENT":
                 live_data = connectors.get_fred_data("UNRATE")
             elif category == "GLOBAL_GDP":
-                # Ensure you are calling your new growth method
+                # Specifically targeting the Growth Percentage indicator
                 live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
 
             if live_data:
-                anchor["official_value"] = str(live_data['value'])
-                anchor["source"] = f"{live_data['source']} ({live_data['date']})"
+                anchor["official_value"] = str(live_data.get('value', 'TBD'))
+                anchor["source"] = f"{live_data.get('source', 'Unknown')} ({live_data.get('date', 'N/A')})"
 
-        # 3. THE SAFETY FILTER: React Compatibility
-        # Prevents "React Error #31" by ensuring all conflicts are strings
+        # 3. THE SAFETY FILTER: Frontend Compatibility
+        # Prevents "React Error #31" by ensuring all items in the list are strings
         conflicts = audit_data.get("unresolved_conflicts", [])
         clean_conflicts = []
         for item in conflicts:
             if isinstance(item, dict):
-                c_text = item.get("conflict", "") or item.get("claim", "Unknown Conflict")
+                # Flatten any objects Claude might have accidentally nested
+                c_text = item.get("conflict", "") or item.get("claim", "Logical Conflict")
                 d_text = item.get("detail", "") or item.get("note", "")
                 clean_conflicts.append(f"{c_text}: {d_text}")
             else:
@@ -103,32 +105,31 @@ def perform_audit(text: str, domain: str) -> dict:
         return audit_data
         
     except Exception as e:
+        # Surfaces the exact error in the Lovable Audit UI for easier debugging
         return {"error": f"Audit Logic Error: {str(e)}"}
 
 def scrape_text_from_url(url: str) -> str:
-    """Robust scraper with bot-resistant headers."""
+    """Robust scraper with anti-bot fallbacks."""
     if not url.strip().startswith("http"):
         return url
 
     
 
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     try:
-        # Try clean extraction first
+        # Priority 1: Clean text extraction via Jina AI
         res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
         if res.status_code == 200:
             return res.text
             
-        # Standard fallback
+        # Priority 2: Standard BeautifulSoup fallback
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            # Focus on article content tags
-            paragraphs = soup.find_all(['p', 'article'])
-            return " ".join([p.get_text() for p in paragraphs])
+            # Extract text only from paragraphs to reduce noise
+            return " ".join([p.get_text() for p in soup.find_all('p')])
             
         return ""
     except Exception:

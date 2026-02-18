@@ -52,16 +52,19 @@ class DataConnectors:
             pass
         return None
 
-    def get_world_bank_growth_data(self):
-        """Fetch Global GDP Growth % specifically."""
-        # NY.GDP.MKTP.KD.ZG is the code for annual growth %
-        url = "https://api.worldbank.org/v2/country/WLD/indicator/NY.GDP.MKTP.KD.ZG"
+    def get_world_bank_data(self, indicator: str):
+        """Fetch Global metrics from World Bank (e.g., NY.GDP.MKTP.KD.ZG for Growth %)."""
+        url = f"https://api.worldbank.org/v2/country/WLD/indicator/{indicator}"
         try:
             res = requests.get(url, params={"format": "json", "per_page": 1}, timeout=5)
             data = res.json()
             if len(data) > 1 and data[1]:
                 latest = data[1][0]
-                return {"value": f"{round(latest['value'], 2)}%", "date": latest["date"], "source": "World Bank"}
+                val = latest["value"]
+                # Format growth as a percentage string if it's the growth indicator
+                if "ZG" in indicator and val is not None:
+                    val = f"{round(val, 2)}%"
+                return {"value": val, "date": latest["date"], "source": "World Bank"}
         except Exception:
             pass
         return None
