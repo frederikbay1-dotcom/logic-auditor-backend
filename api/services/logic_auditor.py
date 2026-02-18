@@ -48,7 +48,7 @@ Rules:
 def perform_audit(text: str, domain: str) -> dict:
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-20241022", # Using a stable, high-performance model
+            model="claude-sonnet-4-6", # Using a stable, high-performance model
             max_tokens=4096,
             system=SYSTEM_PROMPT,
             messages=[
