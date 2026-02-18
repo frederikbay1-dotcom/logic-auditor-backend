@@ -10,19 +10,34 @@ from api.services.data_connectors import DataConnectors
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 connectors = DataConnectors()
 
-# RE-INTRODUCED: Strict Schema for the AI Brain
+# 1. THE BRAIN: Strict Intent-Based Prompting
 SYSTEM_PROMPT = """
-You are the "Logic Auditor." Deconstruct the provided text.
-Return ONLY a valid JSON object with this EXACT structure:
+You are the "Logic Auditor," a high-precision analytical tool. 
+Deconstruct the provided text and return ONLY a valid JSON object.
 
+For the 'data_anchors', you must assign one of these categories if applicable:
+- 'ECON_INFLATION': US CPI data
+- 'ECON_UNEMPLOYMENT': US Unemployment rate
+- 'ENERGY_OIL': Crude oil spot prices
+- 'GLOBAL_GDP': Global GDP growth percentage
+
+STRICT JSON SCHEMA:
 {
   "theses": ["string"],
-  "logical_flaws": [{"flaw_type": "string", "lawyers_note": "string", "quote": "string", "severity": "High"}],
+  "logical_flaws": [
+    {
+      "flaw_type": "string",
+      "lawyers_note": "string",
+      "quote": "string",
+      "severity": "High/Medium/Low"
+    }
+  ],
   "data_anchors": [
     {
-      "claim": "string", 
-      "source": "string", 
-      "official_value": "TBD", 
+      "claim": "string",
+      "category": "ECON_INFLATION | ECON_UNEMPLOYMENT | ENERGY_OIL | GLOBAL_GDP | NONE",
+      "source": "string",
+      "official_value": "TBD",
       "variance": "N/A"
     }
   ],
@@ -48,46 +63,41 @@ def perform_audit(text: str, domain: str) -> dict:
             
         audit_data = json.loads(json_match.group(0))
 
-        # Define keyword lists for specialist routing
-        energy_keywords = ["oil", "brent", "wti", "petroleum", "gasoline", "fuel", "energy", "crude", "barrel"]
-        econ_keywords = ["inflation", "cpi", "consumer price", "unemployment", "jobs", "yield", "interest rate"]
-        global_keywords = ["gdp", "poverty", "growth", "population", "emissions", "carbon"]
-
-        # ENRICHMENT: Precise Specialist Routing
+        # 2. THE SPECIALISTS: Intent-Based Routing
+        # This replaces the brittle keyword-matching logic
         for anchor in audit_data.get("data_anchors", []):
-            if not isinstance(anchor, dict): continue
+            if not isinstance(anchor, dict):
+                continue
                 
-            claim = anchor.get("claim", "").lower()
+            category = anchor.get("category", "").upper()
             live_data = None
             
-            # 1. EIA (Crude Oil)
-            if any(k in claim for k in ["oil", "brent", "wti", "crude"]):
+            if category == "ENERGY_OIL":
                 live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
-            
-            # 2. FRED (Inflation/Unemployment)
-            elif any(k in claim for k in ["inflation", "cpi"]):
+            elif category == "ECON_INFLATION":
                 live_data = connectors.get_fred_data("CPIAUCSL")
-            elif "unemployment" in claim:
+            elif category == "ECON_UNEMPLOYMENT":
                 live_data = connectors.get_fred_data("UNRATE")
-            
-            # 3. World Bank (Growth Percentage)
-            elif any(k in claim for k in ["gdp", "growth"]):
-                live_data = connectors.get_world_bank_growth_data() # <--- Use the new % method
+            elif category == "GLOBAL_GDP":
+                # Ensure you are calling your new growth method
+                live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
 
             if live_data:
-                anchor["official_value"] = live_data['value']
+                anchor["official_value"] = str(live_data['value'])
                 anchor["source"] = f"{live_data['source']} ({live_data['date']})"
 
-        # SANITIZATION: Force 'unresolved_conflicts' to be a list of strings for React
+        # 3. THE SAFETY FILTER: React Compatibility
+        # Prevents "React Error #31" by ensuring all conflicts are strings
         conflicts = audit_data.get("unresolved_conflicts", [])
         clean_conflicts = []
         for item in conflicts:
             if isinstance(item, dict):
-                conflict_text = item.get("conflict", "") or item.get("claim", "")
-                detail_text = item.get("detail", "") or item.get("note", "")
-                clean_conflicts.append(f"{conflict_text}: {detail_text}")
+                c_text = item.get("conflict", "") or item.get("claim", "Unknown Conflict")
+                d_text = item.get("detail", "") or item.get("note", "")
+                clean_conflicts.append(f"{c_text}: {d_text}")
             else:
                 clean_conflicts.append(str(item))
+        
         audit_data["unresolved_conflicts"] = clean_conflicts
 
         return audit_data
@@ -96,17 +106,30 @@ def perform_audit(text: str, domain: str) -> dict:
         return {"error": f"Audit Logic Error: {str(e)}"}
 
 def scrape_text_from_url(url: str) -> str:
+    """Robust scraper with bot-resistant headers."""
     if not url.strip().startswith("http"):
         return url
-    headers = {'User-Agent': 'Mozilla/5.0'}
+
+    
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+    }
     try:
+        # Try clean extraction first
         res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
         if res.status_code == 200:
             return res.text
+            
+        # Standard fallback
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            return " ".join([p.text for p in soup.find_all('p')])
+            # Focus on article content tags
+            paragraphs = soup.find_all(['p', 'article'])
+            return " ".join([p.get_text() for p in paragraphs])
+            
         return ""
     except Exception:
         return ""
