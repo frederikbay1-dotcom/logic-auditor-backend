@@ -61,6 +61,22 @@ def perform_audit(text: str, domain: str) -> dict:
                 anchor["official_value"] = f"{live_data['value']}"
                 anchor["source"] = f"{live_data['source']} ({live_data['date']})"
         
+       # ... (after the enrichment loop)
+
+        # SANITIZATION: Force 'unresolved_conflicts' to be a list of strings
+        conflicts = audit_data.get("unresolved_conflicts", [])
+        clean_conflicts = []
+        for item in conflicts:
+            if isinstance(item, dict):
+                # If AI returned an object, merge its keys into a single string
+                conflict_text = item.get("conflict", "") or item.get("claim", "")
+                detail_text = item.get("detail", "") or item.get("note", "")
+                clean_conflicts.append(f"{conflict_text}: {detail_text}")
+            else:
+                clean_conflicts.append(str(item))
+        
+        audit_data["unresolved_conflicts"] = clean_conflicts
+
         return audit_data
         
     except Exception as e:
