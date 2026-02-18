@@ -1,66 +1,81 @@
 import os
+import json
+import anthropic
 import requests
+import re
+from bs4 import BeautifulSoup # <--- THIS IS THE MISSING LINK
+from api.services.data_connectors import DataConnectors
 
-class DataConnectors:
-    def __init__(self):
-        # These are your 'Labs' credentials
-        self.fred_key = os.getenv("FRED_API_KEY")
-        self.eia_key = os.getenv("EIA_API_KEY")
+# Initialize the AI and Data Labs
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+connectors = DataConnectors()
 
-    def get_fred_data(self, series_id: str):
-        """Fetch latest US Econ data from FRED."""
-        if not self.fred_key:
-            return None
-        url = "https://api.stlouisfed.org/fred/series/observations"
-        params = {
-            "series_id": series_id,
-            "api_key": self.fred_key,
-            "file_type": "json",
-            "sort_order": "desc",
-            "limit": 1
-        }
-        try:
-            res = requests.get(url, params=params, timeout=5)
-            if res.status_code == 200:
-                obs = res.json().get("observations", [])
-                if obs:
-                    return {"value": obs[0]["value"], "date": obs[0]["date"], "source": "FRED"}
-        except Exception:
-            pass
-        return None
+SYSTEM_PROMPT = """
+You are the "Logic Auditor." Deconstruct the provided text.
+Return ONLY a JSON object with keys: theses, logical_flaws, data_anchors, unresolved_conflicts, next_steps.
+"""
 
-    def get_eia_data(self, route: str, series: str):
-        """Fetch Energy data from EIA."""
-        if not self.eia_key:
-            return None
-        url = f"https://api.eia.gov/v2/{route}/data/"
-        params = {
-            "api_key": self.eia_key,
-            "frequency": "monthly",
-            "data[0]": "value",
-            "facets[series][]": series,
-            "sort[0][column]": "period",
-            "sort[0][direction]": "desc",
-            "length": 1
-        }
-        try:
-            res = requests.get(url, params=params, timeout=5)
-            if res.status_code == 200:
-                data = res.json()["response"]["data"][0]
-                return {"value": data["value"], "date": data["period"], "source": "EIA"}
-        except Exception:
-            pass
-        return None
+def perform_audit(text: str, domain: str) -> dict:
+    try:
+        response = client.messages.create(
+            model="claude-3-5-sonnet-latest", 
+            max_tokens=4096,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": f"Domain: {domain}\n\nText:\n{text}"}],
+            temperature=0.1
+        )
+        
+        raw_text = response.content[0].text
+        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        if not json_match:
+            return {"error": "AI failed to produce a JSON block."}
+            
+        audit_data = json.loads(json_match.group(0))
 
-    def get_world_bank_data(self, indicator: str):
-        """Fetch Global metrics from World Bank."""
-        url = f"https://api.worldbank.org/v2/country/WLD/indicator/{indicator}"
-        try:
-            res = requests.get(url, params={"format": "json", "per_page": 1}, timeout=5)
-            data = res.json()
-            if len(data) > 1 and data[1]:
-                latest = data[1][0]
-                return {"value": latest["value"], "date": latest["date"], "source": "World Bank"}
-        except Exception:
-            pass
-        return None
+        # Cross-reference identified anchors with FRED/EIA/World Bank
+        for anchor in audit_data.get("data_anchors", []):
+            claim = anchor.get("claim", "").lower()
+            live_data = None
+            
+            # Use your new DataConnectors specialists
+            if "oil" in claim or "energy" in claim:
+                live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
+            elif "inflation" in claim or "cpi" in claim:
+                live_data = connectors.get_fred_data("CPIAUCSL")
+            elif "unemployment" in claim:
+                live_data = connectors.get_fred_data("UNRATE")
+            elif "gdp" in claim:
+                live_data = connectors.get_world_bank_data("NY.GDP.MKTP.CD")
+
+            if live_data:
+                anchor["official_value"] = f"{live_data['value']}"
+                anchor["source"] = f"{live_data['source']} ({live_data['date']})"
+        
+        return audit_data
+        
+    except Exception as e:
+        return {"error": f"Audit Logic Error: {str(e)}"}
+
+def scrape_text_from_url(url: str) -> str:
+    # If input isn't a URL, return it as text
+    if not url.strip().startswith("http"):
+        return url
+
+    
+
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    try:
+        # Try Jina AI first for clean content
+        res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
+        if res.status_code == 200:
+            return res.text
+            
+        # Fallback to BeautifulSoup if Jina fails
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            return " ".join([p.text for p in soup.find_all('p')])
+            
+        raise Exception(f"Access denied by publisher (Status {res.status_code})")
+    except Exception as e:
+        raise Exception(f"Scraper Error: {str(e)}")
