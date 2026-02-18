@@ -52,15 +52,16 @@ class DataConnectors:
             pass
         return None
 
-    def get_world_bank_data(self, indicator: str):
-        """Fetch Global metrics from World Bank (No key required)."""
-        url = f"https://api.worldbank.org/v2/country/WLD/indicator/{indicator}"
+    def get_world_bank_growth_data(self):
+        """Fetch Global GDP Growth % specifically."""
+        # NY.GDP.MKTP.KD.ZG is the code for annual growth %
+        url = "https://api.worldbank.org/v2/country/WLD/indicator/NY.GDP.MKTP.KD.ZG"
         try:
             res = requests.get(url, params={"format": "json", "per_page": 1}, timeout=5)
             data = res.json()
             if len(data) > 1 and data[1]:
                 latest = data[1][0]
-                return {"value": latest["value"], "date": latest["date"], "source": "World Bank"}
+                return {"value": f"{round(latest['value'], 2)}%", "date": latest["date"], "source": "World Bank"}
         except Exception:
             pass
         return None

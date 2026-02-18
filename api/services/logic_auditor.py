@@ -53,27 +53,29 @@ def perform_audit(text: str, domain: str) -> dict:
         econ_keywords = ["inflation", "cpi", "consumer price", "unemployment", "jobs", "yield", "interest rate"]
         global_keywords = ["gdp", "poverty", "growth", "population", "emissions", "carbon"]
 
-        # ENRICHMENT: Now with Safety Checks
+        # ENRICHMENT: Precise Specialist Routing
         for anchor in audit_data.get("data_anchors", []):
-            # SAFETY: If the AI sent a string instead of a dict, skip to prevent 'str has no get' error
-            if not isinstance(anchor, dict):
-                continue
+            if not isinstance(anchor, dict): continue
                 
             claim = anchor.get("claim", "").lower()
             live_data = None
             
-            # Route to the correct Specialist Lab
-            if any(k in claim for k in energy_keywords):
+            # 1. EIA (Crude Oil)
+            if any(k in claim for k in ["oil", "brent", "wti", "crude"]):
                 live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
-            elif any(k in claim for k in econ_keywords):
-                series_id = "CPIAUCSL" if ("inflation" in claim or "cpi" in claim) else "UNRATE"
-                live_data = connectors.get_fred_data(series_id)
-            elif any(k in claim for k in global_keywords):
-                live_data = connectors.get_world_bank_data("NY.GDP.MKTP.CD")
+            
+            # 2. FRED (Inflation/Unemployment)
+            elif any(k in claim for k in ["inflation", "cpi"]):
+                live_data = connectors.get_fred_data("CPIAUCSL")
+            elif "unemployment" in claim:
+                live_data = connectors.get_fred_data("UNRATE")
+            
+            # 3. World Bank (Growth Percentage)
+            elif any(k in claim for k in ["gdp", "growth"]):
+                live_data = connectors.get_world_bank_growth_data() # <--- Use the new % method
 
-            # Inject official data if found
             if live_data:
-                anchor["official_value"] = f"{live_data['value']}"
+                anchor["official_value"] = live_data['value']
                 anchor["source"] = f"{live_data['source']} ({live_data['date']})"
 
         # SANITIZATION: Force 'unresolved_conflicts' to be a list of strings for React
