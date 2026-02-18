@@ -66,31 +66,30 @@ def perform_audit(text: str, domain: str) -> dict:
             
         audit_data = json.loads(json_match.group(0))
 
-        # ENRICHMENT: Automatically check FRED, EIA, and World Bank for data anchors
+        # ENRICHMENT: Broadened Specialist Routing
         for anchor in audit_data.get("data_anchors", []):
             claim = anchor.get("claim", "").lower()
             live_data = None
             
-            # ENRICHMENT: Improved Specialist Routing
-        for anchor in audit_data.get("data_anchors", []):
-            claim = anchor.get("claim", "").lower()
-            live_data = None
-            
-            # 1. EIA (Energy & Oil) - Broaden keywords
-            if any(k in claim for k in ["oil", "brent", "wti", "petroleum", "gasoline", "fuel", "energy"]):
-                # Defaulting to WTI Crude Spot Price
+            # 1. EIA (Energy, Petroleum, Renewables)
+            energy_keywords = ["oil", "brent", "wti", "petroleum", "gasoline", "fuel", "energy", "crude", "barrel"]
+            if any(k in claim for k in energy_keywords):
+                # Fetching WTI Crude Spot Price as the primary benchmark
                 live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
             
-            # 2. FRED (US Econ) - Broaden keywords
-            elif any(k in claim for k in ["inflation", "cpi", "consumer price", "unemployment", "jobs", "yield"]):
-                series_id = "CPIAUCSL" if "inflation" in claim else "UNRATE"
+            # 2. FRED (US Economic Vitals)
+            econ_keywords = ["inflation", "cpi", "consumer price", "unemployment", "jobs", "yield", "interest rate"]
+            elif any(k in claim for k in econ_keywords):
+                series_id = "CPIAUCSL" if "inflation" in claim or "cpi" in claim else "UNRATE"
                 live_data = connectors.get_fred_data(series_id)
             
-            # 3. World Bank (Global Metrics)
-            elif any(k in claim for k in ["gdp", "poverty", "global growth", "population"]):
+            # 3. World Bank (Global Macro & Development)
+            global_keywords = ["gdp", "poverty", "growth", "population", "emissions", "carbon"]
+            elif any(k in claim for k in global_keywords):
+                # Fetching World GDP (Current US$)
                 live_data = connectors.get_world_bank_data("NY.GDP.MKTP.CD")
 
-            # Update the UI values if we got a hit
+            # Overwrite TBD if a specialist returned a value
             if live_data:
                 anchor["official_value"] = f"{live_data['value']}"
                 anchor["source"] = f"{live_data['source']} ({live_data['date']})"
