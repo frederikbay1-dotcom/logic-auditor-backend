@@ -32,7 +32,10 @@ STRICT JSON SCHEMA:
       "variance": "N/A"
     }
   ],
-  "executive_abstract": "Provide a dense, 150-word academic abstract summarizing findings, logical integrity, and data discrepancies.",
+  "executive_abstract": {
+    "headline": "A concise, authoritative headline summarizing the primary audit finding.",
+    "key_findings": ["3-5 clear, simplified bullet points deconstructing the core logical and data gaps."]
+  },
   "unresolved_conflicts": ["string"],
   "next_steps": ["string"]
 }
@@ -46,7 +49,7 @@ def extract_number(text: str):
 def perform_audit(text: str, domain: str) -> dict:
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-3-5-sonnet-20240620", 
             max_tokens=4096,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": f"Domain: {domain}\n\nText:\n{text}"}],
@@ -58,6 +61,7 @@ def perform_audit(text: str, domain: str) -> dict:
         if not json_match: return {"error": "AI failed to produce valid JSON."}
         audit_data = json.loads(json_match.group(0))
 
+        # Specialist Data Enrichment
         for anchor in audit_data.get("data_anchors", []):
             if not isinstance(anchor, dict): continue
             cat = anchor.get("category", "").upper()
@@ -93,7 +97,6 @@ def perform_audit(text: str, domain: str) -> dict:
 
 def scrape_text_from_url(url: str) -> str:
     url = url.strip()
-    # Logic: If it's a URL, scrape it. If it contains spaces, it's likely raw text.
     if " " in url or len(url) > 255: return url
     if not url.startswith("http"): url = f"https://{url}"
     headers = {'User-Agent': 'Mozilla/5.0'}
