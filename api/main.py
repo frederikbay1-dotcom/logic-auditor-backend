@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+from api.models import AuditRequest
 from api.services.logic_auditor import perform_audit, scrape_text_from_url
 
 app = FastAPI()
@@ -14,12 +13,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Define the expected structure of the incoming audit request
-class AuditRequest(BaseModel):
-    url: Optional[str] = None
-    text: Optional[str] = None
-    domain: str
 
 @app.get("/api/health")
 async def health():

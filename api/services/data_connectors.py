@@ -46,8 +46,9 @@ class DataConnectors:
         try:
             res = requests.get(url, params=params, timeout=5)
             if res.status_code == 200:
-                data = res.json()["response"]["data"][0]
-                return {"value": data["value"], "date": data["period"], "source": "EIA"}
+                data = res.json().get("response", {}).get("data", [])
+                if data:
+                    return {"value": data[0]["value"], "date": data[0]["period"], "source": "EIA"}
         except Exception: pass
         return None
 
@@ -58,9 +59,10 @@ class DataConnectors:
         params = {"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": self.alpha_key}
         try:
             res = requests.get(url, params=params, timeout=5)
-            data = res.json().get("Global Quote", {})
-            if data and "05. price" in data:
-                return {"value": data.get("05. price"), "date": data.get("07. latest trading day"), "source": f"Alpha Vantage ({symbol})"}
+            if res.status_code == 200:
+                data = res.json().get("Global Quote", {})
+                if data and "05. price" in data:
+                    return {"value": data.get("05. price"), "date": data.get("07. latest trading day"), "source": f"Alpha Vantage ({symbol})"}
         except Exception: pass
         return None
 
@@ -69,8 +71,11 @@ class DataConnectors:
         url = "https://global-warming.org/api/temperature-api"
         try:
             res = requests.get(url, timeout=5)
-            latest = res.json().get("result", [])[-1]
-            return {"value": f"+{latest['station']}°C", "date": latest['time'], "source": "NASA GISS"}
+            if res.status_code == 200:
+                results = res.json().get("result", [])
+                if results:
+                    latest = results[-1]
+                    return {"value": f"+{latest['station']}°C", "date": latest['time'], "source": "NASA GISS"}
         except Exception: pass
         return None
 
@@ -82,7 +87,7 @@ class DataConnectors:
             if len(data) > 1 and data[1]:
                 latest = data[1][0]
                 val = latest["value"]
-                # Format as percentage for growth indicators
+                # Calibrate: Format as percentage for growth indicators
                 if val is not None and "ZG" in indicator: 
                     val = f"{round(val, 2)}%"
                 return {"value": val, "date": latest["date"], "source": "World Bank"}
