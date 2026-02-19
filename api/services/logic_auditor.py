@@ -6,19 +6,20 @@ import re
 from bs4 import BeautifulSoup
 from api.services.data_connectors import DataConnectors
 
+# Initialize tools
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 connectors = DataConnectors()
 
 SYSTEM_PROMPT = """
 You are the "Logic Auditor." Deconstruct the provided text and return ONLY a valid JSON object.
 
-CATEGORIES:
-- 'ECON_INFLATION': US CPI
-- 'ECON_UNEMPLOYMENT': US Jobs
-- 'ENERGY_OIL': Crude prices
-- 'GLOBAL_GDP': Growth %
-- 'MARKET_INDEX': Stocks/Indices (e.g. S&P 500)
-- 'CLIMATE_METRIC': Temp anomalies or CO2
+CATEGORIES for data_anchors:
+- 'ECON_INFLATION': US CPI (Annual Rate)
+- 'ECON_UNEMPLOYMENT': US Unemployment rate
+- 'ENERGY_OIL': Crude oil spot prices
+- 'GLOBAL_GDP': Global GDP growth percentage
+- 'MARKET_INDEX': Stocks/Indices (e.g., SPY, QQQ)
+- 'CLIMATE_METRIC': Global temperature or CO2
 - 'GLOBAL_STATS': Life expectancy or Population
 
 STRICT JSON SCHEMA:
@@ -43,6 +44,7 @@ STRICT JSON SCHEMA:
 """
 
 def extract_number(text: str):
+    """Cleanly extract the first number from a string, handling symbols."""
     if not text: return None
     match = re.search(r"([-+]?\d*\.?\d+)", text.replace(',', ''))
     return float(match.group(1)) if match else None
@@ -56,39 +58,70 @@ def perform_audit(text: str, domain: str) -> dict:
             messages=[{"role": "user", "content": f"Domain: {domain}\n\nText:\n{text}"}],
             temperature=0.1
         )
-        audit_data = json.loads(re.search(r'\{.*\}', response.content[0].text, re.DOTALL).group(0))
+        
+        raw_output = response.content[0].text
+        json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
+        if not json_match:
+            return {"error": "AI failed to produce valid JSON."}
+            
+        audit_data = json.loads(json_match.group(0))
 
+        # SPECIALIST DATA ENRICHMENT
         for anchor in audit_data.get("data_anchors", []):
             if not isinstance(anchor, dict): continue
+            
             cat = anchor.get("category", "").upper()
             live_data = None
             
-            if cat == "ENERGY_OIL": live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
-            elif cat == "ECON_INFLATION": live_data = connectors.get_fred_data("CPIAUCSL")
-            elif cat == "ECON_UNEMPLOYMENT": live_data = connectors.get_fred_data("UNRATE")
-            elif cat == "GLOBAL_GDP": live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
-            elif cat == "MARKET_INDEX": live_data = connectors.get_market_data("SPY")
-            elif cat == "CLIMATE_METRIC": live_data = connectors.get_climate_data()
-            elif cat == "GLOBAL_STATS": live_data = connectors.get_world_bank_data("SP.DYN.LE00.IN")
+            # Specialist Routing with Unit Calibration
+            if cat == "ENERGY_OIL": 
+                live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
+            elif cat == "ECON_INFLATION": 
+                live_data = connectors.get_fred_data("CPIAUCSL", units="pc1") # Fixed: Uses Rate %
+            elif cat == "ECON_UNEMPLOYMENT": 
+                live_data = connectors.get_fred_data("UNRATE")
+            elif cat == "GLOBAL_GDP": 
+                live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
+            elif cat == "MARKET_INDEX": 
+                # Attempt to find a symbol (default to SPY)
+                symbol = "SPY"
+                if "nasdaq" in anchor.get("claim", "").lower() or "qqq" in anchor.get("claim", "").lower():
+                    symbol = "QQQ"
+                live_data = connectors.get_market_data(symbol)
+            elif cat == "CLIMATE_METRIC": 
+                live_data = connectors.get_climate_data()
+            elif cat == "GLOBAL_STATS": 
+                live_data = connectors.get_world_bank_data("SP.DYN.LE00.IN")
 
             if live_data:
                 val = live_data.get('value')
+                # Handle reporting lags (World Bank demographic data)
                 if val is None:
                     anchor["official_value"] = "Data Pending (Reporting Lag)"
                     anchor["variance"] = "N/A"
                 else:
-                    off_val = str(val)
-                    anchor["official_value"] = off_val
-                    # ... rest of variance logic
-                anchor["source"] = f"{live_data.get('source')} ({live_data.get('date')})"
-                
-                c_num, o_num = extract_number(anchor.get("claim")), extract_number(off_val)
-                if c_num is not None and o_num is not None and o_num != 0:
-                    diff = ((c_num - o_num) / o_num) * 100
-                    anchor["variance"] = "Match" if abs(diff) < 0.1 else f"{'+' if diff > 0 else ''}{round(diff, 1)}%"
+                    off_val_str = str(val)
+                    anchor["official_value"] = off_val_str
+                    anchor["source"] = f"{live_data.get('source')} ({live_data.get('date')})"
+                    
+                    # Calculate Variance Delta
+                    c_num = extract_number(anchor.get("claim", ""))
+                    o_num = extract_number(off_val_str)
+                    
+                    if c_num is not None and o_num is not None and o_num != 0:
+                        diff = ((c_num - o_num) / o_num) * 100
+                        if abs(diff) < 0.1:
+                            anchor["variance"] = "Match"
+                        else:
+                            prefix = "+" if diff > 0 else ""
+                            anchor["variance"] = f"{prefix}{round(diff, 1)}%"
 
-        audit_data["unresolved_conflicts"] = [str(c.get("conflict", c) if isinstance(c, dict) else c) for c in audit_data.get("unresolved_conflicts", [])]
+        # UI Sanitization
+        conflicts = audit_data.get("unresolved_conflicts", [])
+        audit_data["unresolved_conflicts"] = [str(c.get("conflict", c) if isinstance(c, dict) else c) for c in conflicts]
+
         return audit_data
+        
     except Exception as e:
         return {"error": f"Audit Logic Error: {str(e)}"}
 

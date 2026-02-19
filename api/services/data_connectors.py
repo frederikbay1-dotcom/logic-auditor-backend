@@ -8,7 +8,8 @@ class DataConnectors:
         self.eia_key = os.getenv("EIA_API_KEY")
         self.alpha_key = os.getenv("ALPHA_VANTAGE_KEY")
 
-    def get_fred_data(self, series_id: str):
+    def get_fred_data(self, series_id: str, units: str = None):
+        """Fetch US Econ data. Use units='pc1' for Percentage Change from a Year Ago."""
         if not self.fred_key: return None
         url = "https://api.stlouisfed.org/fred/series/observations"
         params = {
@@ -16,22 +17,32 @@ class DataConnectors:
             "api_key": self.fred_key, 
             "file_type": "json", 
             "sort_order": "desc", 
-            "limit": 1,
-            "units": "pc1"  # <--- CRITICAL: Returns Percentage Change vs Year Ago
+            "limit": 1
         }
-        # ... rest of the function remains same
+        if units:
+            params["units"] = units
+            
         try:
             res = requests.get(url, params=params, timeout=5)
             if res.status_code == 200:
                 obs = res.json().get("observations", [])
-                if obs: return {"value": obs[0]["value"], "date": obs[0]["date"], "source": "FRED"}
+                if obs and obs[0]["value"] != ".":
+                    return {"value": obs[0]["value"], "date": obs[0]["date"], "source": "FRED"}
         except Exception: pass
         return None
 
     def get_eia_data(self, route: str, series: str):
         if not self.eia_key: return None
         url = f"https://api.eia.gov/v2/{route}/data/"
-        params = {"api_key": self.eia_key, "frequency": "monthly", "data[0]": "value", "facets[series][]": series, "sort[0][column]": "period", "sort[0][direction]": "desc", "length": 1}
+        params = {
+            "api_key": self.eia_key,
+            "frequency": "monthly",
+            "data[0]": "value",
+            "facets[series][]": series,
+            "sort[0][column]": "period",
+            "sort[0][direction]": "desc",
+            "length": 1
+        }
         try:
             res = requests.get(url, params=params, timeout=5)
             if res.status_code == 200:
@@ -41,7 +52,7 @@ class DataConnectors:
         return None
 
     def get_market_data(self, symbol: str):
-        """Fetch Market Index data from Alpha Vantage."""
+        """Fetch real-time stock/index data from Alpha Vantage."""
         if not self.alpha_key: return None
         url = "https://www.alphavantage.co/query"
         params = {"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": self.alpha_key}
@@ -54,7 +65,7 @@ class DataConnectors:
         return None
 
     def get_climate_data(self):
-        """Fetch Global Temperature Anomaly (NASA GISS)."""
+        """Fetch latest Global Temperature Anomaly (NASA GISS)."""
         url = "https://global-warming.org/api/temperature-api"
         try:
             res = requests.get(url, timeout=5)
@@ -71,7 +82,9 @@ class DataConnectors:
             if len(data) > 1 and data[1]:
                 latest = data[1][0]
                 val = latest["value"]
-                if val is not None and "ZG" in indicator: val = f"{round(val, 2)}%"
+                # Format as percentage for growth indicators
+                if val is not None and "ZG" in indicator: 
+                    val = f"{round(val, 2)}%"
                 return {"value": val, "date": latest["date"], "source": "World Bank"}
         except Exception: pass
         return None
