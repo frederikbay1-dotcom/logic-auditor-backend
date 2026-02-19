@@ -32,7 +32,7 @@ STRICT JSON SCHEMA:
       "variance": "N/A"
     }
   ],
-  "executive_abstract": {
+  "abstract": {
     "headline": "A concise, authoritative headline summarizing the primary audit finding.",
     "key_findings": ["3-5 clear, simplified bullet points deconstructing the core logical and data gaps."]
   },
