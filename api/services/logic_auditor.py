@@ -3,7 +3,6 @@ import json
 import anthropic
 import requests
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from api.services.data_connectors import DataConnectors
 
 # Initialize tools
@@ -34,10 +33,7 @@ STRICT JSON SCHEMA:
       "variance": "N/A"
     }
   ],
-  "feynman_summary": {
-    "simple_explanation": "Explain core logical/data gap as if to a 10-year-old.",
-    "medical_analogy": "Provide a medical analogy for this specific flaw."
-  },
+  "executive_abstract": "Provide a dense, concise academic abstract (max 150 words) summarizing audit findings, logical integrity, and verified data discrepancies.",
   "unresolved_conflicts": ["string"],
   "next_steps": ["string"]
 }
@@ -52,7 +48,7 @@ def extract_number(text: str):
 def perform_audit(text: str, domain: str) -> dict:
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-6", 
+            model="claude-3-5-sonnet-20240620", 
             max_tokens=4096,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": f"Domain: {domain}\n\nText:\n{text}"}],
@@ -66,58 +62,53 @@ def perform_audit(text: str, domain: str) -> dict:
             
         audit_data = json.loads(json_match.group(0))
 
-        # SPECIALIST DATA ENRICHMENT — fetch live data in parallel
-        anchors = [a for a in audit_data.get("data_anchors", []) if isinstance(a, dict)]
-
-        def fetch_live_data(anchor):
+        # SPECIALIST DATA ENRICHMENT
+        for anchor in audit_data.get("data_anchors", []):
+            if not isinstance(anchor, dict): continue
+            
             cat = anchor.get("category", "").upper()
-            if cat == "ENERGY_OIL":
-                return connectors.get_eia_data("petroleum/pri/spt", "RWTC")
-            elif cat == "ECON_INFLATION":
-                return connectors.get_fred_data("CPIAUCSL", units="pc1")
-            elif cat == "ECON_UNEMPLOYMENT":
-                return connectors.get_fred_data("UNRATE")
-            elif cat == "GLOBAL_GDP":
-                return connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
-            elif cat == "MARKET_INDEX":
+            live_data = None
+            
+            if cat == "ENERGY_OIL": 
+                live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
+            elif cat == "ECON_INFLATION": 
+                live_data = connectors.get_fred_data("CPIAUCSL", units="pc1")
+            elif cat == "ECON_UNEMPLOYMENT": 
+                live_data = connectors.get_fred_data("UNRATE")
+            elif cat == "GLOBAL_GDP": 
+                live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
+            elif cat == "MARKET_INDEX": 
                 symbol = "SPY"
                 if "nasdaq" in anchor.get("claim", "").lower() or "qqq" in anchor.get("claim", "").lower():
                     symbol = "QQQ"
-                return connectors.get_market_data(symbol)
-            elif cat == "CLIMATE_METRIC":
-                return connectors.get_climate_data()
-            elif cat == "GLOBAL_STATS":
-                return connectors.get_world_bank_data("SP.DYN.LE00.IN")
-            return None
+                live_data = connectors.get_market_data(symbol)
+            elif cat == "CLIMATE_METRIC": 
+                live_data = connectors.get_climate_data()
+            elif cat == "GLOBAL_STATS": 
+                live_data = connectors.get_world_bank_data("SP.DYN.LE00.IN")
 
-        with ThreadPoolExecutor(max_workers=len(anchors) or 1) as pool:
-            futures = {pool.submit(fetch_live_data, a): a for a in anchors}
-            for future in as_completed(futures):
-                anchor = futures[future]
-                live_data = future.result()
-
-                if live_data:
-                    val = live_data.get('value')
-                    # Safety: Handle reporting lags for demographic data
-                    if val is None:
-                        anchor["official_value"] = "Data Pending (Reporting Lag)"
-                        anchor["variance"] = "N/A"
-                    else:
-                        off_val_str = str(val)
-                        anchor["official_value"] = off_val_str
-                        anchor["source"] = f"{live_data.get('source')} ({live_data.get('date')})"
-
-                        # Calculate Variance Delta
-                        c_num = extract_number(anchor.get("claim", ""))
-                        o_num = extract_number(off_val_str)
-
-                        if c_num is not None and o_num is not None and o_num != 0:
-                            diff = ((c_num - o_num) / o_num) * 100
-                            if abs(diff) < 0.1:
-                                anchor["variance"] = "Match"
-                            else:
-                                prefix = "+" if diff > 0 else ""
-                                anchor["variance"] = f"{prefix}{round(diff, 1)}%"
+            if live_data:
+                val = live_data.get('value')
+                # Safety: Handle reporting lags
+                if val is None:
+                    anchor["official_value"] = "Data Pending"
+                    anchor["variance"] = "N/A"
+                else:
+                    off_val_str = str(val)
+                    anchor["official_value"] = off_val_str
+                    anchor["source"] = f"{live_data.get('source')} ({live_data.get('date')})"
+                    
+                    # Calculate Variance Delta
+                    c_num = extract_number(anchor.get("claim", ""))
+                    o_num = extract_number(off_val_str)
+                    
+                    if c_num is not None and o_num is not None and o_num != 0:
+                        diff = ((c_num - o_num) / o_num) * 100
+                        if abs(diff) < 0.1:
+                            anchor["variance"] = "Match"
+                        else:
+                            prefix = "+" if diff > 0 else ""
+                            anchor["variance"] = f"{prefix}{round(diff, 1)}%"
 
         # UI Sanitization
         conflicts = audit_data.get("unresolved_conflicts", [])
