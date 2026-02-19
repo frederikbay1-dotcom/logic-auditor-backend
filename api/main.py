@@ -32,7 +32,10 @@ async def audit(request: AuditRequest):
         # Priority 1: Use manually pasted text if it meets minimum length
         if request.text and len(request.text.strip()) > 10:
             audit_content = request.text
-        # Priority 2: Attempt to scrape content if a URL is provided
+        # Priority 2: If url field contains actual article text (not a URL), use it directly
+        elif request.url and not request.url.strip().startswith(("http", "www.")):
+            audit_content = request.url
+        # Priority 3: Attempt to scrape content if a URL is provided
         elif request.url:
             audit_content = scrape_text_from_url(request.url)
             print(f"Scrape result — length: {len(audit_content)}")
