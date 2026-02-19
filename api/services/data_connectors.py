@@ -11,7 +11,15 @@ class DataConnectors:
     def get_fred_data(self, series_id: str):
         if not self.fred_key: return None
         url = "https://api.stlouisfed.org/fred/series/observations"
-        params = {"series_id": series_id, "api_key": self.fred_key, "file_type": "json", "sort_order": "desc", "limit": 1}
+        params = {
+            "series_id": series_id, 
+            "api_key": self.fred_key, 
+            "file_type": "json", 
+            "sort_order": "desc", 
+            "limit": 1,
+            "units": "pc1"  # <--- CRITICAL: Returns Percentage Change vs Year Ago
+        }
+        # ... rest of the function remains same
         try:
             res = requests.get(url, params=params, timeout=5)
             if res.status_code == 200:

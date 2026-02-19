@@ -72,8 +72,14 @@ def perform_audit(text: str, domain: str) -> dict:
             elif cat == "GLOBAL_STATS": live_data = connectors.get_world_bank_data("SP.DYN.LE00.IN")
 
             if live_data:
-                off_val = str(live_data.get('value', 'TBD'))
-                anchor["official_value"] = off_val
+                val = live_data.get('value')
+                if val is None:
+                    anchor["official_value"] = "Data Pending (Reporting Lag)"
+                    anchor["variance"] = "N/A"
+                else:
+                    off_val = str(val)
+                    anchor["official_value"] = off_val
+                    # ... rest of variance logic
                 anchor["source"] = f"{live_data.get('source')} ({live_data.get('date')})"
                 
                 c_num, o_num = extract_number(anchor.get("claim")), extract_number(off_val)
