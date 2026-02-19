@@ -129,7 +129,9 @@ def perform_audit(text: str, domain: str) -> dict:
         return {"error": f"Audit Logic Error: {str(e)}"}
 
 def scrape_text_from_url(url: str) -> str:
-    if not url.strip().startswith("http"): return ""
+    url = url.strip()
+    if not url.startswith("http"):
+        url = f"https://{url}"
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
