@@ -12,6 +12,15 @@ connectors = DataConnectors()
 SYSTEM_PROMPT = """
 You are the "Logic Auditor." Deconstruct the provided text and return ONLY a valid JSON object.
 
+CATEGORIES:
+- 'ECON_INFLATION': US CPI
+- 'ECON_UNEMPLOYMENT': US Jobs
+- 'ENERGY_OIL': Crude prices
+- 'GLOBAL_GDP': Growth %
+- 'MARKET_INDEX': Stocks/Indices (e.g. S&P 500)
+- 'CLIMATE_METRIC': Temp anomalies or CO2
+- 'GLOBAL_STATS': Life expectancy or Population
+
 STRICT JSON SCHEMA:
 {
   "theses": ["string"],
@@ -19,14 +28,14 @@ STRICT JSON SCHEMA:
   "data_anchors": [
     {
       "claim": "string",
-      "category": "ECON_INFLATION | ECON_UNEMPLOYMENT | ENERGY_OIL | GLOBAL_GDP | NONE",
+      "category": "CATEGORY_NAME",
       "official_value": "TBD",
       "variance": "N/A"
     }
   ],
   "feynman_summary": {
-    "simple_explanation": "Provide a simple, 10-year-old level explanation of the core logical gap.",
-    "medical_analogy": "Provide a medical analogy for this specific logical flaw."
+    "simple_explanation": "Explain core logical/data gap as if to a 10-year-old.",
+    "medical_analogy": "Provide a medical analogy for this specific flaw."
   },
   "unresolved_conflicts": ["string"],
   "next_steps": ["string"]
@@ -47,45 +56,32 @@ def perform_audit(text: str, domain: str) -> dict:
             messages=[{"role": "user", "content": f"Domain: {domain}\n\nText:\n{text}"}],
             temperature=0.1
         )
-        
-        raw_text = response.content[0].text
-        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-        if not json_match:
-            return {"error": "AI failed to produce a JSON block."}
-            
-        audit_data = json.loads(json_match.group(0))
+        audit_data = json.loads(re.search(r'\{.*\}', response.content[0].text, re.DOTALL).group(0))
 
-        # Enrichment logic for FRED, EIA, and World Bank
         for anchor in audit_data.get("data_anchors", []):
             if not isinstance(anchor, dict): continue
-            category = anchor.get("category", "").upper()
+            cat = anchor.get("category", "").upper()
             live_data = None
             
-            if category == "ENERGY_OIL":
-                live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
-            elif category == "ECON_INFLATION":
-                live_data = connectors.get_fred_data("CPIAUCSL")
-            elif category == "ECON_UNEMPLOYMENT":
-                live_data = connectors.get_fred_data("UNRATE")
-            elif category == "GLOBAL_GDP":
-                live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
+            if cat == "ENERGY_OIL": live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
+            elif cat == "ECON_INFLATION": live_data = connectors.get_fred_data("CPIAUCSL")
+            elif cat == "ECON_UNEMPLOYMENT": live_data = connectors.get_fred_data("UNRATE")
+            elif cat == "GLOBAL_GDP": live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
+            elif cat == "MARKET_INDEX": live_data = connectors.get_market_data("SPY")
+            elif cat == "CLIMATE_METRIC": live_data = connectors.get_climate_data()
+            elif cat == "GLOBAL_STATS": live_data = connectors.get_world_bank_data("SP.DYN.LE00.IN")
 
             if live_data:
                 off_val = str(live_data.get('value', 'TBD'))
                 anchor["official_value"] = off_val
-                anchor["source"] = f"{live_data.get('source', 'Unknown')} ({live_data.get('date', 'N/A')})"
+                anchor["source"] = f"{live_data.get('source')} ({live_data.get('date')})"
                 
-                claimed_num = extract_number(anchor.get("claim", ""))
-                official_num = extract_number(off_val)
-                
-                if claimed_num is not None and official_num is not None and official_num != 0:
-                    diff_pct = ((claimed_num - official_num) / official_num) * 100
-                    anchor["variance"] = "Match" if abs(diff_pct) < 0.1 else f"{'+' if diff_pct > 0 else ''}{round(diff_pct, 1)}%"
+                c_num, o_num = extract_number(anchor.get("claim")), extract_number(off_val)
+                if c_num is not None and o_num is not None and o_num != 0:
+                    diff = ((c_num - o_num) / o_num) * 100
+                    anchor["variance"] = "Match" if abs(diff) < 0.1 else f"{'+' if diff > 0 else ''}{round(diff, 1)}%"
 
-        # React Safety Filter
-        conflicts = audit_data.get("unresolved_conflicts", [])
-        audit_data["unresolved_conflicts"] = [str(c.get("conflict", c) if isinstance(c, dict) else c) for c in conflicts]
-
+        audit_data["unresolved_conflicts"] = [str(c.get("conflict", c) if isinstance(c, dict) else c) for c in audit_data.get("unresolved_conflicts", [])]
         return audit_data
     except Exception as e:
         return {"error": f"Audit Logic Error: {str(e)}"}
