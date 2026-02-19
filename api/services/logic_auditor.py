@@ -10,29 +10,20 @@ from api.services.data_connectors import DataConnectors
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 connectors = DataConnectors()
 
-# 1. THE BRAIN: Strict Intent-Based Schema
 SYSTEM_PROMPT = """
-You are the "Logic Auditor," a high-precision analytical tool. 
-Deconstruct the provided text and return ONLY a valid JSON object.
+You are the "Logic Auditor." Deconstruct the provided text.
+Return ONLY a valid JSON object. For 'data_anchors', categorize each claim.
 
-For the 'data_anchors', you must assign one of these categories:
-- 'ECON_INFLATION': US Consumer Price Index data
-- 'ECON_UNEMPLOYMENT': US Unemployment rate
-- 'ENERGY_OIL': Crude oil spot prices (WTI/Brent)
-- 'GLOBAL_GDP': Global GDP growth percentage
-- 'NONE': Use if the claim doesn't match the above specialists
+CATEGORIES:
+- 'ECON_INFLATION': US CPI
+- 'ECON_UNEMPLOYMENT': US Jobs
+- 'ENERGY_OIL': Crude prices
+- 'GLOBAL_GDP': Growth %
 
 STRICT JSON SCHEMA:
 {
   "theses": ["string"],
-  "logical_flaws": [
-    {
-      "flaw_type": "string",
-      "lawyers_note": "string",
-      "quote": "string",
-      "severity": "High/Medium/Low"
-    }
-  ],
+  "logical_flaws": [{"flaw_type": "string", "lawyers_note": "string", "quote": "string", "severity": "High"}],
   "data_anchors": [
     {
       "claim": "string",
@@ -46,6 +37,13 @@ STRICT JSON SCHEMA:
   "next_steps": ["string"]
 }
 """
+
+def extract_number(text: str):
+    """Helper to pull the first number out of a string (e.g., '$82.50' -> 82.5)."""
+    if not text: return None
+    # Remove commas and find digits/decimals
+    match = re.search(r"([-+]?\d*\.?\d+)", text.replace(',', ''))
+    return float(match.group(1)) if match else None
 
 def perform_audit(text: str, domain: str) -> dict:
     try:
@@ -64,15 +62,14 @@ def perform_audit(text: str, domain: str) -> dict:
             
         audit_data = json.loads(json_match.group(0))
 
-        # 2. THE SPECIALISTS: Routing by Category
+        # ENRICHMENT & VARIANCE CALCULATION
         for anchor in audit_data.get("data_anchors", []):
-            if not isinstance(anchor, dict):
-                continue
-                
+            if not isinstance(anchor, dict): continue
+            
             category = anchor.get("category", "").upper()
             live_data = None
             
-            # Route to the correct Specialist Lab
+            # 1. Fetch official data
             if category == "ENERGY_OIL":
                 live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
             elif category == "ECON_INFLATION":
@@ -80,53 +77,44 @@ def perform_audit(text: str, domain: str) -> dict:
             elif category == "ECON_UNEMPLOYMENT":
                 live_data = connectors.get_fred_data("UNRATE")
             elif category == "GLOBAL_GDP":
-                # Specifically targets Annual Growth %
                 live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
 
-            # Inject official data if the specialist returned a result
+            # 2. Compare and Calculate
             if live_data:
-                anchor["official_value"] = str(live_data.get('value', 'TBD'))
+                official_val_str = str(live_data.get('value', 'TBD'))
+                anchor["official_value"] = official_val_str
                 anchor["source"] = f"{live_data.get('source', 'Unknown')} ({live_data.get('date', 'N/A')})"
+                
+                # Math: (Claim - Official) / Official
+                claimed_num = extract_number(anchor.get("claim", ""))
+                official_num = extract_number(official_val_str)
+                
+                if claimed_num is not None and official_num is not None and official_num != 0:
+                    diff_pct = ((claimed_num - official_num) / official_num) * 100
+                    # If the difference is tiny, call it 'Accurate'
+                    if abs(diff_pct) < 0.1:
+                        anchor["variance"] = "Match"
+                    else:
+                        prefix = "+" if diff_pct > 0 else ""
+                        anchor["variance"] = f"{prefix}{round(diff_pct, 1)}%"
 
-        # 3. THE SAFETY FILTER: React Compatibility (Error #31 Prevention)
+        # Cleanup for React
         conflicts = audit_data.get("unresolved_conflicts", [])
-        clean_conflicts = []
-        for item in conflicts:
-            if isinstance(item, dict):
-                # Flatten objects into strings for the UI
-                c_text = item.get("conflict", "") or item.get("claim", "Logical Conflict")
-                d_text = item.get("detail", "") or item.get("note", "")
-                clean_conflicts.append(f"{c_text}: {d_text}")
-            else:
-                clean_conflicts.append(str(item))
-        
-        audit_data["unresolved_conflicts"] = clean_conflicts
+        audit_data["unresolved_conflicts"] = [str(c.get("conflict", c) if isinstance(c, dict) else c) for c in conflicts]
 
         return audit_data
-        
     except Exception as e:
         return {"error": f"Audit Logic Error: {str(e)}"}
 
 def scrape_text_from_url(url: str) -> str:
-    """Robust scraper with anti-bot fallbacks."""
-    if not url.strip().startswith("http"):
-        return url
-
-    
-
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    if not url.strip().startswith("http"): return url
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        # Try clean text extraction via Jina AI
         res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
-        if res.status_code == 200:
-            return res.text
-            
-        # Standard BeautifulSoup fallback
+        if res.status_code == 200: return res.text
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            return " ".join([p.get_text() for p in soup.find_all('p')])
-            
+            return " ".join([p.text for p in soup.find_all('p')])
         return ""
-    except Exception:
-        return ""
+    except Exception: return ""
