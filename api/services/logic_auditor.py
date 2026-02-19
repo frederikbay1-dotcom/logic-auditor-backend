@@ -49,7 +49,7 @@ def extract_number(text: str):
 def perform_audit(text: str, domain: str) -> dict:
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-20240620", 
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": f"Domain: {domain}\n\nText:\n{text}"}],
