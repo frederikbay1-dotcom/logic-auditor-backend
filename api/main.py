@@ -27,13 +27,15 @@ async def audit(request: AuditRequest):
     """
     try:
         audit_content = ""
-        
+        print(f"Audit request — url: {repr(request.url)}, text length: {len(request.text) if request.text else 0}, domain: {request.domain}")
+
         # Priority 1: Use manually pasted text if it meets minimum length
         if request.text and len(request.text.strip()) > 10:
             audit_content = request.text
         # Priority 2: Attempt to scrape content if a URL is provided
         elif request.url:
             audit_content = scrape_text_from_url(request.url)
+            print(f"Scrape result — length: {len(audit_content)}")
         else:
             raise ValueError("Validation Error: Please paste article text or provide a valid URL.")
 
