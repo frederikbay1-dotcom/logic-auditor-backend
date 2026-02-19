@@ -10,16 +10,17 @@ from api.services.data_connectors import DataConnectors
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 connectors = DataConnectors()
 
-# 1. THE BRAIN: Strict Intent-Based Prompting
+# 1. THE BRAIN: Strict Intent-Based Schema
 SYSTEM_PROMPT = """
 You are the "Logic Auditor," a high-precision analytical tool. 
 Deconstruct the provided text and return ONLY a valid JSON object.
 
-For the 'data_anchors', you must assign one of these categories if applicable:
-- 'ECON_INFLATION': US CPI data
+For the 'data_anchors', you must assign one of these categories:
+- 'ECON_INFLATION': US Consumer Price Index data
 - 'ECON_UNEMPLOYMENT': US Unemployment rate
-- 'ENERGY_OIL': Crude oil spot prices
+- 'ENERGY_OIL': Crude oil spot prices (WTI/Brent)
 - 'GLOBAL_GDP': Global GDP growth percentage
+- 'NONE': Use if the claim doesn't match the above specialists
 
 STRICT JSON SCHEMA:
 {
@@ -63,8 +64,7 @@ def perform_audit(text: str, domain: str) -> dict:
             
         audit_data = json.loads(json_match.group(0))
 
-        # 2. THE SPECIALISTS: Intent-Based Execution
-        # We rely on the AI's categorization to call the correct Data Lab
+        # 2. THE SPECIALISTS: Routing by Category
         for anchor in audit_data.get("data_anchors", []):
             if not isinstance(anchor, dict):
                 continue
@@ -72,28 +72,28 @@ def perform_audit(text: str, domain: str) -> dict:
             category = anchor.get("category", "").upper()
             live_data = None
             
+            # Route to the correct Specialist Lab
             if category == "ENERGY_OIL":
-                # Specifically targeting WTI Crude Spot Price
                 live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
             elif category == "ECON_INFLATION":
                 live_data = connectors.get_fred_data("CPIAUCSL")
             elif category == "ECON_UNEMPLOYMENT":
                 live_data = connectors.get_fred_data("UNRATE")
             elif category == "GLOBAL_GDP":
-                # Specifically targeting the Growth Percentage indicator
+                # Specifically targets Annual Growth %
                 live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
 
+            # Inject official data if the specialist returned a result
             if live_data:
                 anchor["official_value"] = str(live_data.get('value', 'TBD'))
                 anchor["source"] = f"{live_data.get('source', 'Unknown')} ({live_data.get('date', 'N/A')})"
 
-        # 3. THE SAFETY FILTER: Frontend Compatibility
-        # Prevents "React Error #31" by ensuring all items in the list are strings
+        # 3. THE SAFETY FILTER: React Compatibility (Error #31 Prevention)
         conflicts = audit_data.get("unresolved_conflicts", [])
         clean_conflicts = []
         for item in conflicts:
             if isinstance(item, dict):
-                # Flatten any objects Claude might have accidentally nested
+                # Flatten objects into strings for the UI
                 c_text = item.get("conflict", "") or item.get("claim", "Logical Conflict")
                 d_text = item.get("detail", "") or item.get("note", "")
                 clean_conflicts.append(f"{c_text}: {d_text}")
@@ -105,7 +105,6 @@ def perform_audit(text: str, domain: str) -> dict:
         return audit_data
         
     except Exception as e:
-        # Surfaces the exact error in the Lovable Audit UI for easier debugging
         return {"error": f"Audit Logic Error: {str(e)}"}
 
 def scrape_text_from_url(url: str) -> str:
@@ -115,20 +114,17 @@ def scrape_text_from_url(url: str) -> str:
 
     
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
-        # Priority 1: Clean text extraction via Jina AI
+        # Try clean text extraction via Jina AI
         res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
         if res.status_code == 200:
             return res.text
             
-        # Priority 2: Standard BeautifulSoup fallback
+        # Standard BeautifulSoup fallback
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            # Extract text only from paragraphs to reduce noise
             return " ".join([p.get_text() for p in soup.find_all('p')])
             
         return ""
