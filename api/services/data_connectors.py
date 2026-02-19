@@ -85,7 +85,6 @@ class DataConnectors:
             if len(data) > 1 and data[1]:
                 latest = data[1][0]
                 val = latest["value"]
-                # Calibrate: Format as percentage for growth indicators
                 if val is not None and "ZG" in indicator: 
                     val = f"{round(val, 2)}%"
                 return {"value": val, "date": latest["date"], "source": "World Bank"}

@@ -5,7 +5,6 @@ import requests
 import re
 from api.services.data_connectors import DataConnectors
 
-# Initialize tools
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 connectors = DataConnectors()
 
@@ -33,14 +32,13 @@ STRICT JSON SCHEMA:
       "variance": "N/A"
     }
   ],
-  "executive_abstract": "Provide a dense, concise academic abstract (max 150 words) summarizing audit findings, logical integrity, and verified data discrepancies.",
+  "executive_abstract": "Provide a dense, 150-word academic abstract summarizing findings, logical integrity, and data discrepancies.",
   "unresolved_conflicts": ["string"],
   "next_steps": ["string"]
 }
 """
 
 def extract_number(text: str):
-    """Cleanly extract the first number from a string, handling symbols."""
     if not text: return None
     match = re.search(r"([-+]?\d*\.?\d+)", text.replace(',', ''))
     return float(match.group(1)) if match else None
@@ -57,74 +55,49 @@ def perform_audit(text: str, domain: str) -> dict:
         
         raw_output = response.content[0].text
         json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
-        if not json_match:
-            return {"error": "AI failed to produce valid JSON."}
-            
+        if not json_match: return {"error": "AI failed to produce valid JSON."}
         audit_data = json.loads(json_match.group(0))
 
-        # SPECIALIST DATA ENRICHMENT
         for anchor in audit_data.get("data_anchors", []):
             if not isinstance(anchor, dict): continue
-            
             cat = anchor.get("category", "").upper()
             live_data = None
             
-            if cat == "ENERGY_OIL": 
-                live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
-            elif cat == "ECON_INFLATION": 
-                live_data = connectors.get_fred_data("CPIAUCSL", units="pc1")
-            elif cat == "ECON_UNEMPLOYMENT": 
-                live_data = connectors.get_fred_data("UNRATE")
-            elif cat == "GLOBAL_GDP": 
-                live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
+            if cat == "ENERGY_OIL": live_data = connectors.get_eia_data("petroleum/pri/spt", "RWTC")
+            elif cat == "ECON_INFLATION": live_data = connectors.get_fred_data("CPIAUCSL", units="pc1")
+            elif cat == "ECON_UNEMPLOYMENT": live_data = connectors.get_fred_data("UNRATE")
+            elif cat == "GLOBAL_GDP": live_data = connectors.get_world_bank_data("NY.GDP.MKTP.KD.ZG")
             elif cat == "MARKET_INDEX": 
                 symbol = "SPY"
-                if "nasdaq" in anchor.get("claim", "").lower() or "qqq" in anchor.get("claim", "").lower():
-                    symbol = "QQQ"
+                if "nasdaq" in anchor.get("claim", "").lower(): symbol = "QQQ"
                 live_data = connectors.get_market_data(symbol)
-            elif cat == "CLIMATE_METRIC": 
-                live_data = connectors.get_climate_data()
-            elif cat == "GLOBAL_STATS": 
-                live_data = connectors.get_world_bank_data("SP.DYN.LE00.IN")
+            elif cat == "CLIMATE_METRIC": live_data = connectors.get_climate_data()
+            elif cat == "GLOBAL_STATS": live_data = connectors.get_world_bank_data("SP.DYN.LE00.IN")
 
             if live_data:
                 val = live_data.get('value')
-                # Safety: Handle reporting lags
                 if val is None:
-                    anchor["official_value"] = "Data Pending"
-                    anchor["variance"] = "N/A"
+                    anchor["official_value"], anchor["variance"] = "Data Pending", "N/A"
                 else:
-                    off_val_str = str(val)
-                    anchor["official_value"] = off_val_str
+                    anchor["official_value"] = str(val)
                     anchor["source"] = f"{live_data.get('source')} ({live_data.get('date')})"
-                    
-                    # Calculate Variance Delta
-                    c_num = extract_number(anchor.get("claim", ""))
-                    o_num = extract_number(off_val_str)
-                    
+                    c_num, o_num = extract_number(anchor.get("claim")), extract_number(str(val))
                     if c_num is not None and o_num is not None and o_num != 0:
                         diff = ((c_num - o_num) / o_num) * 100
-                        if abs(diff) < 0.1:
-                            anchor["variance"] = "Match"
-                        else:
-                            prefix = "+" if diff > 0 else ""
-                            anchor["variance"] = f"{prefix}{round(diff, 1)}%"
+                        anchor["variance"] = "Match" if abs(diff) < 0.1 else f"{'+' if diff > 0 else ''}{round(diff, 1)}%"
 
-        # UI Sanitization
-        conflicts = audit_data.get("unresolved_conflicts", [])
-        audit_data["unresolved_conflicts"] = [str(c.get("conflict", c) if isinstance(c, dict) else c) for c in conflicts]
-
+        audit_data["unresolved_conflicts"] = [str(c.get("conflict", c) if isinstance(c, dict) else c) for c in audit_data.get("unresolved_conflicts", [])]
         return audit_data
-        
     except Exception as e:
         return {"error": f"Audit Logic Error: {str(e)}"}
 
 def scrape_text_from_url(url: str) -> str:
     url = url.strip()
-    if not url.startswith("http"):
-        url = f"https://{url}"
+    # Logic: If it's a URL, scrape it. If it contains spaces, it's likely raw text.
+    if " " in url or len(url) > 255: return url
+    if not url.startswith("http"): url = f"https://{url}"
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         res = requests.get(f"https://r.jina.ai/{url}", headers=headers, timeout=10)
         return res.text if res.status_code == 200 else ""
-    except Exception: return ""
+    except Exception: return url
